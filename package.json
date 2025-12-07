@@ -1,0 +1,26 @@
+{
+  "name": "memo-rite:-perpetual-daily-journal",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.556.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "@dnd-kit/core": "^6.3.1",
+    "firebase": "^12.6.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@dnd-kit/modifiers": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
