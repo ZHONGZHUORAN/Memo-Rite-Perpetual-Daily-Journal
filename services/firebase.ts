@@ -8,13 +8,15 @@ import { JournalEvent } from '../types';
 // I will implement a "Mock Mode" using LocalStorage if config is missing.
 
 const firebaseConfig = {
-  apiKey: process.env.API_KEY, 
-  authDomain: "memo-rite-app.firebaseapp.com",
-  projectId: "memo-rite-app",
-  storageBucket: "memo-rite-app.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyDeMl_Os6bvF1wlDin_ON_2EmpUY6kTmJ0",
+  authDomain: "dayprinter.firebaseapp.com",
+  projectId: "dayprinter",
+  storageBucket: "dayprinter.firebasestorage.app",
+  messagingSenderId: "1019501416560",
+  appId: "1:1019501416560:web:bce923ef823264842524b5",
+  measurementId: "G-TN1XJKP7J1"
 };
+
 
 let app: FirebaseApp | undefined;
 let auth: any;
