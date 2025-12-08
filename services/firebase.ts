@@ -1,12 +1,10 @@
+
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { JournalEvent } from '../types';
 
-// NOTE: In a real production app, use process.env.REACT_APP_FIREBASE_...
-// For this generated code to work immediately without configuration, 
-// I will implement a "Mock Mode" using LocalStorage if config is missing.
-
+// NOTE: Replace this with your OWN Firebase Config from the Firebase Console to enable syncing across devices.
 const firebaseConfig = {
   apiKey: "AIzaSyDeMl_Os6bvF1wlDin_ON_2EmpUY6kTmJ0",
   authDomain: "dayprinter.firebaseapp.com",
@@ -17,20 +15,20 @@ const firebaseConfig = {
   measurementId: "G-TN1XJKP7J1"
 };
 
-
 let app: FirebaseApp | undefined;
 let auth: any;
 let db: any;
 let isMock = false;
 
 try {
-  if (firebaseConfig.apiKey) {
+  // Basic check to see if config looks vaguely valid
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY") {
     app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
     auth = getAuth(app);
     db = getFirestore(app);
   } else {
     isMock = true;
-    console.warn("Firebase API Key missing. Running in LocalStorage Mock Mode.");
+    console.warn("Firebase Configuration missing or invalid. Running in LocalStorage Mock Mode.");
   }
 } catch (e) {
   isMock = true;
@@ -41,6 +39,37 @@ try {
 const triggerMockAuthUpdate = () => {
   window.dispatchEvent(new Event('mock_auth_state_changed'));
 };
+
+// --- LocalStorage Helpers (Fallback System) ---
+// These ensure that if the DB fails, the user can still use the app locally.
+const mockDB = {
+  get: (userId: string): JournalEvent[] => {
+    try {
+      return JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
+    } catch { return []; }
+  },
+  set: (userId: string, events: JournalEvent[]) => {
+    localStorage.setItem(`events_${userId}`, JSON.stringify(events));
+  },
+  add: (userId: string, event: Omit<JournalEvent, 'id'>) => {
+    const events = mockDB.get(userId);
+    const newEvent = { ...event, id: 'local-' + Date.now() + Math.random().toString(36).substr(2, 9) };
+    events.push(newEvent);
+    mockDB.set(userId, events);
+    return newEvent;
+  },
+  update: (userId: string, event: JournalEvent) => {
+    const events = mockDB.get(userId);
+    const updated = events.map(e => e.id === event.id ? event : e);
+    mockDB.set(userId, updated);
+  },
+  delete: (userId: string, eventId: string) => {
+    const events = mockDB.get(userId);
+    const filtered = events.filter(e => e.id !== eventId);
+    mockDB.set(userId, filtered);
+  }
+};
+
 
 // --- Auth Services ---
 
@@ -56,8 +85,7 @@ export const loginWithGoogle = async () => {
     return await signInWithPopup(auth, provider);
   } catch (error) {
     console.error("Google Auth Failed", error);
-    alert("Google Login failed (likely due to missing config). Switching to mock mode for this session.");
-    isMock = true;
+    // If real auth fails, fall back to guest
     return loginGuest();
   }
 };
@@ -83,7 +111,6 @@ export const registerWithEmail = async (email: string, pass: string) => {
 export const loginWithEmail = async (email: string, pass: string) => {
   if (isMock) {
     const storedPass = localStorage.getItem('mock_creds_' + email);
-    // For mock convenience, accept any password if user doesn't exist yet, or check match
     const mockUser = { uid: 'user-' + email, email, displayName: email.split('@')[0] };
     localStorage.setItem('mock_user', JSON.stringify(mockUser));
     triggerMockAuthUpdate();
@@ -102,7 +129,6 @@ export const logout = async () => {
 };
 
 export const subscribeToAuth = (callback: (user: any) => void) => {
-  // 1. Define how to get the current user state
   const getCurrentUser = () => {
     const stored = localStorage.getItem('mock_user');
     if (stored) return JSON.parse(stored);
@@ -110,98 +136,107 @@ export const subscribeToAuth = (callback: (user: any) => void) => {
     return null;
   };
 
-  // 2. Initial Callback
   callback(getCurrentUser());
 
-  // 3. Listen for Mock Changes (Custom Event)
-  const handleMockChange = () => {
-    callback(getCurrentUser());
-  };
+  const handleMockChange = () => callback(getCurrentUser());
   window.addEventListener('mock_auth_state_changed', handleMockChange);
 
-  // 4. Listen for Firebase Changes
   let unsubscribeFirebase = () => {};
   if (!isMock && auth) {
     unsubscribeFirebase = onAuthStateChanged(auth, (user) => {
-       // If firebase emits a user, it usually takes precedence, or if it emits null, we check if we have a mock user
        if (user) {
          callback(user);
        } else {
-         // Fallback to checking local storage (e.g. if we switched to mock mode)
          callback(getCurrentUser());
        }
     });
   }
 
-  // 5. Return Unsubscribe
   return () => {
     window.removeEventListener('mock_auth_state_changed', handleMockChange);
     unsubscribeFirebase();
   };
 };
 
-// --- Data Services ---
+// --- Data Services (With Automatic Fallback) ---
 
 export const getEventsForDay = async (userId: string, day: number): Promise<JournalEvent[]> => {
   if (isMock || localStorage.getItem('mock_user')) {
-    const allEvents = JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
-    return allEvents.filter((e: JournalEvent) => e.day === day);
+    return mockDB.get(userId).filter(e => e.day === day);
   }
-  const q = query(collection(db, `users/${userId}/events`), where("day", "==", day));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JournalEvent));
+  try {
+    const q = query(collection(db, `users/${userId}/events`), where("day", "==", day));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JournalEvent));
+  } catch (e) {
+    console.warn("Firestore Read Error (Falling back to local):", e);
+    return mockDB.get(userId).filter(e => e.day === day);
+  }
 };
 
 export const getEventCounts = async (userId: string): Promise<Record<number, number>> => {
-  if (isMock || localStorage.getItem('mock_user')) {
-    const allEvents = JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
+  // Helper to count events
+  const countEvents = (events: JournalEvent[]) => {
     const counts: Record<number, number> = {};
-    allEvents.forEach((e: JournalEvent) => {
-      counts[e.day] = (counts[e.day] || 0) + 1;
-    });
+    events.forEach(e => counts[e.day] = (counts[e.day] || 0) + 1);
     return counts;
+  };
+
+  if (isMock || localStorage.getItem('mock_user')) {
+    return countEvents(mockDB.get(userId));
   }
   
-  const q = query(collection(db, `users/${userId}/events`));
-  const querySnapshot = await getDocs(q);
-  const counts: Record<number, number> = {};
-  querySnapshot.docs.forEach(doc => {
-    const data = doc.data();
-    const d = data.day;
-    counts[d] = (counts[d] || 0) + 1;
-  });
-  return counts;
+  try {
+    const q = query(collection(db, `users/${userId}/events`));
+    const querySnapshot = await getDocs(q);
+    const counts: Record<number, number> = {};
+    querySnapshot.docs.forEach(doc => {
+      const d = doc.data().day;
+      counts[d] = (counts[d] || 0) + 1;
+    });
+    return counts;
+  } catch (e) {
+    console.warn("Firestore Count Error (Falling back to local):", e);
+    return countEvents(mockDB.get(userId));
+  }
 };
 
 export const addEvent = async (userId: string, event: Omit<JournalEvent, 'id'>) => {
   if (isMock || localStorage.getItem('mock_user')) {
-    const allEvents = JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
-    const newEvent = { ...event, id: Date.now().toString() };
-    allEvents.push(newEvent);
-    localStorage.setItem(`events_${userId}`, JSON.stringify(allEvents));
-    return newEvent;
+    return mockDB.add(userId, event);
   }
-  const docRef = await addDoc(collection(db, `users/${userId}/events`), event);
-  return { ...event, id: docRef.id };
+  try {
+    const docRef = await addDoc(collection(db, `users/${userId}/events`), event);
+    return { ...event, id: docRef.id };
+  } catch (e) {
+    console.warn("Firestore Write Error (Saved locally instead):", e);
+    return mockDB.add(userId, event);
+  }
 };
 
 export const updateEvent = async (userId: string, event: JournalEvent) => {
   if (isMock || localStorage.getItem('mock_user')) {
-    let allEvents = JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
-    allEvents = allEvents.map((e: JournalEvent) => e.id === event.id ? event : e);
-    localStorage.setItem(`events_${userId}`, JSON.stringify(allEvents));
+    mockDB.update(userId, event);
     return;
   }
-  const eventRef = doc(db, `users/${userId}/events`, event.id);
-  await updateDoc(eventRef, { ...event });
+  try {
+    const eventRef = doc(db, `users/${userId}/events`, event.id);
+    await updateDoc(eventRef, { ...event });
+  } catch (e) {
+    console.warn("Firestore Update Error (Updated locally instead):", e);
+    mockDB.update(userId, event);
+  }
 };
 
 export const deleteEvent = async (userId: string, eventId: string) => {
   if (isMock || localStorage.getItem('mock_user')) {
-    let allEvents = JSON.parse(localStorage.getItem(`events_${userId}`) || '[]');
-    allEvents = allEvents.filter((e: JournalEvent) => e.id !== eventId);
-    localStorage.setItem(`events_${userId}`, JSON.stringify(allEvents));
+    mockDB.delete(userId, eventId);
     return;
   }
-  await deleteDoc(doc(db, `users/${userId}/events`, eventId));
+  try {
+    await deleteDoc(doc(db, `users/${userId}/events`, eventId));
+  } catch (e) {
+    console.warn("Firestore Delete Error (Deleted locally instead):", e);
+    mockDB.delete(userId, eventId);
+  }
 };
